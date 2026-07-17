@@ -111,7 +111,7 @@ class PlayerActivity : Activity() {
         root.addView(buttons, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         root.addView(TextView(this).apply {
-            text = "swipe →  skip wait      swipe ←  replay / previous"
+            text = "swipe ←  skip wait      swipe →  replay / previous"
             textSize = 11f
             setTextColor(Color.parseColor("#6B7F94"))
             gravity = Gravity.CENTER
@@ -130,7 +130,7 @@ class PlayerActivity : Activity() {
                 val dy = e2.y - e1.y
                 if (abs(dx) > dp(80) && abs(dx) > 1.5f * abs(dy) && abs(vx) > 500) {
                     if (!WorkoutService.isRunning()) return false
-                    if (dx > 0) {
+                    if (dx < 0) {
                         WorkoutService.requestSkipNext()
                         Toast.makeText(this@PlayerActivity, "⏩ next", Toast.LENGTH_SHORT).show()
                     } else {
