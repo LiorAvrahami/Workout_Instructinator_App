@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.timin.ttsloop"
+    namespace = "com.timin.workoutinator"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.timin.ttsloop"
+        applicationId = "com.timin.workoutinator"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
@@ -19,7 +19,5 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    kotlinOptions { jvmTarget = "17" }
 }
