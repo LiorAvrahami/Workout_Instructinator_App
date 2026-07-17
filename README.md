@@ -24,3 +24,9 @@ files (same names) to change sounds.
 ## Build
 Push to GitHub; Actions builds `app-debug.apk` and publishes it at
 `releases/download/latest/app-debug.apk`.
+
+## Swipe controls (player screen)
+Swipe right: skip the current wait, jump to the next instruction.
+Swipe left: replay the current instruction, or jump to the previous one if
+less than `BACK_REPLAY_THRESHOLD_SECONDS` (WorkoutService.kt, default 2.0)
+have passed since the current instruction started.

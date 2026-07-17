@@ -7,14 +7,18 @@ import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import com.timin.workoutinator.WorkoutService.Phase
+import kotlin.math.abs
 
 class PlayerActivity : Activity() {
 
@@ -106,7 +110,43 @@ class PlayerActivity : Activity() {
         buttons.addView(stopButton, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         root.addView(buttons, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
+        root.addView(TextView(this).apply {
+            text = "swipe →  skip wait      swipe ←  replay / previous"
+            textSize = 11f
+            setTextColor(Color.parseColor("#6B7F94"))
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+
         setContentView(root)
+    }
+
+    private val gestureDetector by lazy {
+        GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onFling(
+                e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float
+            ): Boolean {
+                if (e1 == null) return false
+                val dx = e2.x - e1.x
+                val dy = e2.y - e1.y
+                if (abs(dx) > dp(80) && abs(dx) > 1.5f * abs(dy) && abs(vx) > 500) {
+                    if (!WorkoutService.isRunning()) return false
+                    if (dx > 0) {
+                        WorkoutService.requestSkipNext()
+                        Toast.makeText(this@PlayerActivity, "⏩ next", Toast.LENGTH_SHORT).show()
+                    } else {
+                        WorkoutService.requestBack()
+                        Toast.makeText(this@PlayerActivity, "⏪ back", Toast.LENGTH_SHORT).show()
+                    }
+                    return true
+                }
+                return false
+            }
+        })
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        gestureDetector.onTouchEvent(ev)
+        return super.dispatchTouchEvent(ev)
     }
 
     private val poll = object : Runnable {

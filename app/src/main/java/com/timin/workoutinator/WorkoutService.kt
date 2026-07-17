@@ -36,6 +36,13 @@ class WorkoutService : Service() {
     }
 
     companion object {
+        /**
+         * Swipe-left behavior: if more than this many seconds have passed since
+         * the current instruction STARTED being spoken, replay it; otherwise
+         * jump to the previous instruction. Tweak freely.
+         */
+        const val BACK_REPLAY_THRESHOLD_SECONDS = 2.0
+
         val state = State()
         @Volatile private var instance: WorkoutService? = null
         @Volatile private var stopRequested = false
@@ -48,7 +55,28 @@ class WorkoutService : Service() {
         fun requestStop() { stopRequested = true }
         fun requestPause() { pauseRequested = true }
         fun requestResume() { pauseRequested = false }
+        fun requestSkipNext() { instance?.skipNext() }
+        fun requestBack() { instance?.back() }
         fun isRunning() = instance != null
+    }
+
+    // --- swipe navigation state ---
+    @Volatile private var jumpTarget = -1        // event index to jump to; -1 = none
+    @Volatile private var curInstrEventIdx = 0   // event index of current main instruction
+    @Volatile private var anchorMs = 0L          // when that instruction started speaking
+    @Volatile private var instrIdx: List<Int> = emptyList()
+    @Volatile private var eventCount = 0
+
+    private fun skipNext() {
+        val cur = curInstrEventIdx
+        jumpTarget = instrIdx.firstOrNull { it > cur } ?: eventCount // past end = finish
+    }
+
+    private fun back() {
+        val cur = curInstrEventIdx
+        val since = (SystemClock.elapsedRealtime() - anchorMs) / 1000.0
+        jumpTarget = if (since > BACK_REPLAY_THRESHOLD_SECONDS) cur
+        else instrIdx.lastOrNull { it < cur } ?: cur
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -105,25 +133,42 @@ class WorkoutService : Service() {
                         failures.map { "Could not synthesize: \"${it.take(40)}\" (will be skipped)" }
 
             // ---- run timeline ----
-            val speaks = events.filterIsInstance<Event.Speak>().filter { !it.announcement }
-            for ((idx, ev) in events.withIndex()) {
+            instrIdx = events.indices.filter {
+                val e = events[it]; e is Event.Speak && !e.announcement
+            }
+            eventCount = events.size
+            jumpTarget = -1
+
+            var i = 0
+            while (i < events.size) {
                 if (stopRequested) break
-                when (ev) {
+                val jt = jumpTarget
+                if (jt >= 0) {
+                    jumpTarget = -1
+                    i = jt
+                    if (i >= events.size) break
+                    continue
+                }
+                when (val ev = events[i]) {
                     is Event.Speak -> {
                         if (ev.announcement) state.lastAnnouncement = ev.text
                         else {
+                            curInstrEventIdx = i
+                            anchorMs = SystemClock.elapsedRealtime()
                             state.currentInstruction = ev.text
                             state.lastAnnouncement = ""
-                            val si = speaks.indexOfFirst { it === ev }
-                            state.nextInstruction = speaks.getOrNull(si + 1)?.text ?: ""
+                            val si = instrIdx.indexOf(i)
+                            state.nextInstruction = instrIdx.getOrNull(si + 1)
+                                ?.let { (events[it] as Event.Speak).text } ?: ""
                         }
                         state.phase = Phase.SPEAKING
                         updateNotification(state.currentInstruction)
                         waitWhilePaused()
-                        Tts.speakBlocking(this, ev.text) { stopRequested }
+                        Tts.speakBlocking(this, ev.text) { stopRequested || jumpTarget >= 0 }
                     }
                     is Event.Wait -> runWait(ev)
                 }
+                i++
             }
             finish(if (stopRequested) Phase.IDLE else Phase.DONE, "")
         } catch (e: InterruptedException) {
@@ -151,11 +196,11 @@ class WorkoutService : Service() {
         var lastTick = SystemClock.elapsedRealtime()
         var lastNotifSec = -1
         while (elapsed < ev.seconds) {
-            if (stopRequested) return
+            if (stopRequested || jumpTarget >= 0) return
             if (pauseRequested) {
                 state.phase = Phase.PAUSED
                 updateNotification("Paused")
-                while (pauseRequested && !stopRequested) Thread.sleep(100)
+                while (pauseRequested && !stopRequested && jumpTarget < 0) Thread.sleep(100)
                 state.phase = Phase.WAITING
                 lastTick = SystemClock.elapsedRealtime()
             }
@@ -182,7 +227,7 @@ class WorkoutService : Service() {
     }
 
     private fun waitWhilePaused() {
-        while (pauseRequested && !stopRequested) {
+        while (pauseRequested && !stopRequested && jumpTarget < 0) {
             state.phase = Phase.PAUSED
             Thread.sleep(100)
         }
