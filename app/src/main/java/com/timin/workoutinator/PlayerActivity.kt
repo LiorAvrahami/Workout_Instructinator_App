@@ -33,6 +33,14 @@ class PlayerActivity : Activity() {
     private lateinit var pauseButton: Button
     private lateinit var stopButton: Button
     private var paused = false
+    private var sawActive = false   // this activity has seen its own run's active phase
+    private var finishing = false
+    private val createdAt = android.os.SystemClock.elapsedRealtime()
+
+    // Stale DONE/IDLE from a previous run can linger in the static state for a
+    // moment before the new service run resets it; give it a grace window.
+    private fun gracePassed() =
+        android.os.SystemClock.elapsedRealtime() - createdAt > 3000
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,7 +112,8 @@ class PlayerActivity : Activity() {
         stopButton = Button(this).apply {
             text = "■ Stop"
             setOnClickListener {
-                if (WorkoutService.isRunning()) WorkoutService.requestStop() else finish()
+                WorkoutService.requestStop()
+                finish() // straight back to the script list
             }
         }
         buttons.addView(stopButton, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
@@ -155,6 +164,7 @@ class PlayerActivity : Activity() {
             titleView.text = s.scriptName
             when (s.phase) {
                 Phase.PREPARING -> {
+                    sawActive = true
                     pauseButton.isEnabled = true
                     stopButton.text = "■ Stop"
                     phaseView.text = "Preparing audio  ${s.prepDone}/${s.prepTotal}" +
@@ -163,6 +173,7 @@ class PlayerActivity : Activity() {
                     instructionView.text = "Synthesizing phrases.\nNeeds internet on first run;\ncached afterwards."
                 }
                 Phase.SPEAKING, Phase.WAITING, Phase.PAUSED -> {
+                    sawActive = true
                     phaseView.text = when (s.phase) {
                         Phase.SPEAKING -> "speaking"
                         Phase.PAUSED -> "paused"
@@ -175,25 +186,27 @@ class PlayerActivity : Activity() {
                         if (s.nextInstruction.isNotEmpty()) "next: ${s.nextInstruction}" else ""
                 }
                 Phase.DONE -> {
-                    phaseView.text = ""
-                    timerView.text = "✓"
-                    instructionView.text = "Workout complete"
-                    announcementView.text = ""
-                    nextView.text = ""
-                    stopButton.text = "Close"
-                    pauseButton.isEnabled = false
+                    if (sawActive && !finishing) {
+                        finishing = true
+                        phaseView.text = ""
+                        timerView.text = "✓"
+                        instructionView.text = "Workout complete"
+                        announcementView.text = ""
+                        nextView.text = ""
+                        handler.postDelayed({ finish() }, 1200)
+                    } else if (!sawActive && gracePassed()) finish() // stale state from a past run
                 }
                 Phase.ERROR -> {
                     phaseView.text = "error"
                     instructionView.text = s.error
-                    stopButton.text = "Close"
-                    pauseButton.isEnabled = false
+                    stopButton.text = "Close" // error stays readable; Stop/Close exits
                 }
                 Phase.IDLE -> {
-                    if (!WorkoutService.isRunning()) {
-                        stopButton.text = "Close"
-                        pauseButton.isEnabled = false
-                        if (instructionView.text.isEmpty()) instructionView.text = "Stopped"
+                    if (!WorkoutService.isRunning() && !finishing &&
+                        (sawActive || gracePassed())
+                    ) {
+                        finishing = true
+                        finish()
                     }
                 }
             }
