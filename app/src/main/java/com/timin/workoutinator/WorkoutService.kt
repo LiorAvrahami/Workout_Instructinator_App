@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
@@ -52,6 +53,11 @@ class WorkoutService : Service() {
         private const val CHANNEL = "workout"
         private const val NOTIF_ID = 1
 
+        // notification button actions
+        private const val ACTION_TOGGLE = "com.timin.workoutinator.TOGGLE"
+        private const val ACTION_NEXT = "com.timin.workoutinator.NEXT"
+        private const val ACTION_PREV = "com.timin.workoutinator.PREV"
+
         fun requestStop() { stopRequested = true }
         fun requestPause() { pauseRequested = true }
         fun requestResume() { pauseRequested = false }
@@ -84,6 +90,18 @@ class WorkoutService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Notification button presses arrive here as action intents.
+        when (intent?.action) {
+            ACTION_TOGGLE -> {
+                if (pauseRequested) requestResume() else requestPause()
+                instance?.updateNotification(
+                    if (pauseRequested) "Paused" else state.currentInstruction
+                )
+                return START_NOT_STICKY
+            }
+            ACTION_NEXT -> { instance?.skipNext(); return START_NOT_STICKY }
+            ACTION_PREV -> { instance?.back(); return START_NOT_STICKY }
+        }
         if (instance != null) return START_NOT_STICKY // already running one workout
         val id = intent?.getLongExtra(EXTRA_SCRIPT_ID, -1) ?: -1
         val script = ScriptStore.get(this, id)
@@ -165,6 +183,9 @@ class WorkoutService : Service() {
                         updateNotification(state.currentInstruction)
                         waitWhilePaused()
                         Tts.speakBlocking(this, ev.text) { stopRequested || jumpTarget >= 0 }
+                        // Re-anchor the back-swipe timer so the replay-vs-previous
+                        // threshold counts from when the instructor STOPS speaking.
+                        if (!ev.announcement) anchorMs = SystemClock.elapsedRealtime()
                     }
                     is Event.Wait -> runWait(ev)
                 }
@@ -271,12 +292,32 @@ class WorkoutService : Service() {
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE
         )
+
+        fun actionPI(action: String, req: Int): PendingIntent = PendingIntent.getService(
+            this, req,
+            Intent(this, WorkoutService::class.java).setAction(action),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+
+        fun act(iconRes: Int, title: String, action: String, req: Int): Notification.Action =
+            Notification.Action.Builder(
+                Icon.createWithResource(this, iconRes), title, actionPI(action, req)
+            ).build()
+
+        val paused = pauseRequested
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(state.scriptName.ifEmpty { "Workout" })
             .setContentText(text)
             .setContentIntent(pi)
             .setOngoing(true)
+            .addAction(act(android.R.drawable.ic_media_previous, "Previous", ACTION_PREV, 1))
+            .addAction(
+                if (paused) act(android.R.drawable.ic_media_play, "Play", ACTION_TOGGLE, 2)
+                else act(android.R.drawable.ic_media_pause, "Pause", ACTION_TOGGLE, 2)
+            )
+            .addAction(act(android.R.drawable.ic_media_next, "Next", ACTION_NEXT, 3))
+            .setStyle(Notification.MediaStyle().setShowActionsInCompactView(0, 1, 2))
             .build()
     }
 
