@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.media.SoundPool
 import android.os.Bundle
@@ -137,6 +138,27 @@ object Tts {
         .setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
         .build()
+
+    /**
+     * Exact duration of a cached utterance in seconds, read from the audio
+     * file itself. Falls back to a word-count estimate if unavailable.
+     */
+    fun durationSec(ctx: Context, text: String): Double {
+        val f = cachedFile(ctx, text) ?: return estimateSec(text)
+        return try {
+            val mmr = MediaMetadataRetriever()
+            mmr.setDataSource(f.absolutePath)
+            val ms = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+            mmr.release()
+            if (ms != null && ms > 0) ms / 1000.0 else estimateSec(text)
+        } catch (e: Exception) {
+            estimateSec(text)
+        }
+    }
+
+    private fun estimateSec(text: String): Double =
+        0.5 + 0.35 * text.trim().split(Regex("\\s+")).size
 
     /**
      * Play a cached utterance, pausing other audio (transient focus) for its

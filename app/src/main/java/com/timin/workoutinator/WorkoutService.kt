@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import java.util.concurrent.atomic.AtomicBoolean
 import android.graphics.drawable.Icon
 import android.os.IBinder
 import android.os.PowerManager
@@ -182,7 +183,34 @@ class WorkoutService : Service() {
                         state.phase = Phase.SPEAKING
                         updateNotification(state.currentInstruction)
                         waitWhilePaused()
+                        // Keep the countdown moving while the instructor talks:
+                        // show (speech time left) + (upcoming wait of this group).
+                        val speechDur = Tts.durationSec(this, ev.text)
+                        var groupRem = 0.0
+                        var j = i + 1
+                        while (j < events.size) {
+                            val e2 = events[j]
+                            if (e2 is Event.Wait) {
+                                groupRem = e2.groupTotal - e2.groupElapsedBefore; break
+                            }
+                            if (e2 is Event.Speak && !e2.announcement) break
+                            j++
+                        }
+                        if (groupRem < 0) groupRem = 0.0
+                        val tickStart = SystemClock.elapsedRealtime()
+                        val ticking = AtomicBoolean(true)
+                        Thread {
+                            runCatching {
+                                while (ticking.get()) {
+                                    val el = (SystemClock.elapsedRealtime() - tickStart) / 1000.0
+                                    val rem = speechDur + groupRem - el
+                                    state.remainingSec = if (rem > groupRem) rem else groupRem
+                                    Thread.sleep(100)
+                                }
+                            }
+                        }.apply { isDaemon = true }.start()
                         Tts.speakBlocking(this, ev.text) { stopRequested || jumpTarget >= 0 }
+                        ticking.set(false)
                     }
                     is Event.Wait -> runWait(ev)
                 }
