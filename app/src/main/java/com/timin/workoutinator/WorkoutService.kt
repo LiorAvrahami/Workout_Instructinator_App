@@ -183,9 +183,6 @@ class WorkoutService : Service() {
                         updateNotification(state.currentInstruction)
                         waitWhilePaused()
                         Tts.speakBlocking(this, ev.text) { stopRequested || jumpTarget >= 0 }
-                        // Re-anchor the back-swipe timer so the replay-vs-previous
-                        // threshold counts from when the instructor STOPS speaking.
-                        if (!ev.announcement) anchorMs = SystemClock.elapsedRealtime()
                     }
                     is Event.Wait -> runWait(ev)
                 }
@@ -267,6 +264,13 @@ class WorkoutService : Service() {
         instance = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // App swiped away from recents: stop the workout entirely.
+        stopRequested = true
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
