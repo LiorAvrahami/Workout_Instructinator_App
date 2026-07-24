@@ -165,16 +165,23 @@ object Tts {
      * duration. Blocks until playback finishes. Returns false if the file was
      * missing or playback failed.
      */
-    fun speakBlocking(ctx: Context, text: String, stopFlag: () -> Boolean): Boolean {
+    fun speakBlocking(
+        ctx: Context,
+        text: String,
+        stopFlag: () -> Boolean,
+        pauseFlag: () -> Boolean = { false }
+    ): Boolean {
         val file = cachedFile(ctx, text) ?: return false
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
             .setAudioAttributes(speechAttrs)
             .build()
-        val granted = am.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        var focusHeld =
+            am.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
 
         val latch = CountDownLatch(1)
         val mp = MediaPlayer()
+        var mpPaused = false
         return try {
             mp.setAudioAttributes(speechAttrs)
             mp.setDataSource(file.absolutePath)
@@ -182,16 +189,31 @@ object Tts {
             mp.setOnErrorListener { _, _, _ -> latch.countDown(); true }
             mp.prepare()
             mp.start()
-            // poll so Stop can cut speech short
+            // poll so Stop can cut speech short and Pause can hold it mid-word
             while (!latch.await(100, TimeUnit.MILLISECONDS)) {
                 if (stopFlag()) { mp.stop(); break }
+                if (pauseFlag()) {
+                    if (!mpPaused) {
+                        runCatching { if (mp.isPlaying) mp.pause() }
+                        mpPaused = true
+                        // let the music come back while we're paused
+                        if (focusHeld) {
+                            am.abandonAudioFocusRequest(focus); focusHeld = false
+                        }
+                    }
+                } else if (mpPaused) {
+                    if (!focusHeld) focusHeld =
+                        am.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                    runCatching { mp.start() }
+                    mpPaused = false
+                }
             }
             true
         } catch (e: Exception) {
             false
         } finally {
             runCatching { mp.release() }
-            if (granted) am.abandonAudioFocusRequest(focus)
+            if (focusHeld) am.abandonAudioFocusRequest(focus)
         }
     }
 

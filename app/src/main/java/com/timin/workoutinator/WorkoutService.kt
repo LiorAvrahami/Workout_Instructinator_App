@@ -199,18 +199,30 @@ class WorkoutService : Service() {
                         if (groupRem < 0) groupRem = 0.0
                         val tickStart = SystemClock.elapsedRealtime()
                         val ticking = AtomicBoolean(true)
-                        Thread {
+                        val ticker = Thread {
                             runCatching {
+                                var el = 0.0
+                                var last = tickStart
                                 while (ticking.get()) {
-                                    val el = (SystemClock.elapsedRealtime() - tickStart) / 1000.0
+                                    Thread.sleep(100)
+                                    val now = SystemClock.elapsedRealtime()
+                                    if (!pauseRequested) el += (now - last) / 1000.0
+                                    last = now
+                                    if (!ticking.get()) break
+                                    state.phase =
+                                        if (pauseRequested) Phase.PAUSED else Phase.SPEAKING
                                     val rem = speechDur + groupRem - el
                                     state.remainingSec = if (rem > groupRem) rem else groupRem
-                                    Thread.sleep(100)
                                 }
                             }
-                        }.apply { isDaemon = true }.start()
-                        Tts.speakBlocking(this, ev.text) { stopRequested || jumpTarget >= 0 }
+                        }.apply { isDaemon = true; start() }
+                        Tts.speakBlocking(
+                            this, ev.text,
+                            { stopRequested || jumpTarget >= 0 },
+                            { pauseRequested }
+                        )
                         ticking.set(false)
+                        runCatching { ticker.join(300) }
                     }
                     is Event.Wait -> runWait(ev)
                 }
